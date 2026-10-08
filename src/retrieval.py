@@ -9,7 +9,6 @@ from rank_bm25 import BM25Okapi
 CHROMA_PATH = "./data/chroma_db"
 BM25_PATH = "./data/bm25_index.pkl"
 CHUNKS_PATH = "./data/chunks.pkl"
-
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -111,37 +110,22 @@ def reciprocal_rank_fusion(
     ]
 
 
-if __name__ == "__main__":
-    vectorstore, bm25, chunks = load_retrieval_components()
-
-    query = "Path parameters predefined values"
-
-    print("\n=== DENSE RESULTS (ChromaDB) ===")
+def compare_retrieval(
+    query: str,
+    vectorstore: Chroma,
+    bm25: BM25Okapi,
+    chunks: list,
+    top_n: int = 5
+) -> dict:
+    """Compare dense-only retrieval with hybrid RRF retrieval."""
 
     dense_results = dense_retrieve(
-        query,
-        vectorstore,
-        k=5
+        query, vectorstore, k=10
     )
-
-    for doc, score in dense_results:
-        print(f"\n[{score:.3f}]")
-        print(doc.page_content[:200].strip())
-
-    print("\n=== SPARSE RESULTS (BM25) ===")
 
     sparse_results = sparse_retrieve(
-        query,
-        bm25,
-        chunks,
-        k=5
+        query, bm25, chunks, k=10
     )
-
-    for doc, score in sparse_results:
-        print(f"\n[{score:.3f}]")
-        print(doc.page_content[:200].strip())
-    
-    print("\n=== HYBRID RESULTS (RRF) ===")
 
     hybrid_results = reciprocal_rank_fusion(
         dense_results,
@@ -149,9 +133,87 @@ if __name__ == "__main__":
         dense_weight=0.7,
         sparse_weight=0.3,
         rrf_k=60,
-        top_n=5
+        top_n=top_n
     )
 
-    for doc, score in hybrid_results:
-        print(f"\n[{score:.5f}]")
-        print(doc.page_content[:200].strip())
+    return {
+        "dense": dense_results[:top_n],
+        "hybrid": hybrid_results
+    }
+
+
+
+def evaluate_retrieval(
+    results: list,
+    relevant_chunk_ids: set,
+    k: int = 5
+) -> dict:
+    """Calculate Precision@K and Recall@K using labeled chunks."""
+
+    retrieved_ids = [
+        doc.metadata["chunk_index"]
+        for doc, _ in results[:k]
+    ]
+
+    relevant_retrieved = sum(
+        chunk_id in relevant_chunk_ids
+        for chunk_id in retrieved_ids
+    )
+
+    precision = (
+        relevant_retrieved / len(retrieved_ids)
+        if retrieved_ids else 0.0
+    )
+
+    recall = (
+        relevant_retrieved / len(relevant_chunk_ids)
+        if relevant_chunk_ids else 0.0
+    )
+
+    return {
+        "precision_at_k": precision,
+        "recall_at_k": recall
+    }
+
+
+if __name__ == "__main__":
+    vectorstore, bm25, chunks = load_retrieval_components()
+
+    # Initial manually verified evaluation labels
+    evaluation_queries = [
+        {
+            "query": "Path parameters predefined values",
+            "relevant_chunk_ids": {3821},
+        },
+        {
+            "query": "How do query parameters work in FastAPI?",
+            "relevant_chunk_ids": {3839, 3555, 4114},
+        },
+    ]
+
+    for item in evaluation_queries:
+        query = item["query"]
+        relevant_ids = item["relevant_chunk_ids"]
+
+        results = compare_retrieval(
+            query,
+            vectorstore,
+            bm25,
+            chunks,
+            top_n=5,
+        )
+
+        print(f"\nQuery: {query}")
+
+        for mode in ("dense", "hybrid"):
+            metrics = evaluate_retrieval(
+                results[mode],
+                relevant_ids,
+                k=5,
+            )
+
+            print(
+                f"{mode.upper()}: "
+                f"Precision@5={metrics['precision_at_k']:.2f}, "
+                f"Recall@5={metrics['recall_at_k']:.2f}"
+            )
