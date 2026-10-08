@@ -66,6 +66,51 @@ def sparse_retrieve(query: str,bm25: BM25Okapi,chunks: list,k: int = 10) -> list
     ]
 
 
+def reciprocal_rank_fusion(
+    dense_results: list,
+    sparse_results: list,
+    dense_weight: float = 0.7,
+    sparse_weight: float = 0.3,
+    rrf_k: int = 60,
+    top_n: int = 5
+) -> list:
+
+    fused_scores = {}
+    documents = {}
+
+    # Process dense retrieval results
+    for rank, (doc, _) in enumerate(dense_results, start=1):
+        chunk_id = doc.metadata["chunk_index"]
+
+        if chunk_id not in fused_scores:
+            fused_scores[chunk_id] = 0.0
+            documents[chunk_id] = doc
+
+        fused_scores[chunk_id] += dense_weight / (rrf_k + rank)
+
+    # Process sparse retrieval results
+    for rank, (doc, _) in enumerate(sparse_results, start=1):
+        chunk_id = doc.metadata["chunk_index"]
+
+        if chunk_id not in fused_scores:
+            fused_scores[chunk_id] = 0.0
+            documents[chunk_id] = doc
+
+        fused_scores[chunk_id] += sparse_weight / (rrf_k + rank)
+
+    # Sort chunks by their combined RRF scores
+    ranked_chunks = sorted(
+        fused_scores.items(),
+        key=lambda item: item[1],
+        reverse=True
+    )
+
+    return [
+        (documents[chunk_id], score)
+        for chunk_id, score in ranked_chunks[:top_n]
+    ]
+
+
 if __name__ == "__main__":
     vectorstore, bm25, chunks = load_retrieval_components()
 
@@ -94,4 +139,19 @@ if __name__ == "__main__":
 
     for doc, score in sparse_results:
         print(f"\n[{score:.3f}]")
+        print(doc.page_content[:200].strip())
+    
+    print("\n=== HYBRID RESULTS (RRF) ===")
+
+    hybrid_results = reciprocal_rank_fusion(
+        dense_results,
+        sparse_results,
+        dense_weight=0.7,
+        sparse_weight=0.3,
+        rrf_k=60,
+        top_n=5
+    )
+
+    for doc, score in hybrid_results:
+        print(f"\n[{score:.5f}]")
         print(doc.page_content[:200].strip())
