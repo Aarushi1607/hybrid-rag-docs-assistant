@@ -1,10 +1,15 @@
 import os
+import re
+import pickle
+
 from pathlib import Path
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+
+from rank_bm25 import BM25Okapi
 
 def load_documents(docs_path: str) -> list:
     """Load all .md files from a directory recursively."""
@@ -100,17 +105,68 @@ def build_vector_store(chunks: list, persist_path: str = CHROMA_PATH) -> Chroma:
     print(f"  Collection size: {vectorstore._collection.count()} vectors")
     return vectorstore
 
+def tokenize(text: str) -> list[str]:
+    """Convert text into lowercase searchable tokens."""
+    return re.findall(r"\b\w+\b", text.lower())
 
+
+def build_bm25_index(
+    chunks: list,
+    save_path: str = "./data/bm25_index.pkl"
+):
+    """Build and save a BM25 index for the supplied chunks."""
+    print("Building BM25 index...")
+
+    tokenized_corpus = [
+        tokenize(chunk.page_content)
+        for chunk in chunks
+    ]
+
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+
+    with open(save_path, "wb") as f:
+        pickle.dump(bm25, f)
+
+    print(f"✓ BM25 index built over {len(chunks)} chunks")
+
+    return bm25
+
+
+def save_chunks(
+    chunks: list,
+    save_path: str = "./data/chunks.pkl"
+):
+    """Save chunks for later retrieval."""
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+
+    with open(save_path, "wb") as f:
+        pickle.dump(chunks, f)
+
+    print(f"✓ Chunks saved to {save_path}")
+
+
+def load_chunks(
+    save_path: str = "./data/chunks.pkl"
+) -> list:
+    """Load previously saved chunks."""
+    with open(save_path, "rb") as f:
+        return pickle.load(f)
 
 if __name__ == "__main__":
     docs = load_documents("./docs/fastapi-docs/docs/en")
 
     chunks = chunk_documents(
-                docs,
-                chunk_size=512,
-                chunk_overlap=64
-            )
+        docs,
+        chunk_size=512,
+        chunk_overlap=64
+    )
+
+    save_chunks(chunks)
 
     vectorstore = build_vector_store(chunks)
 
-    print("\nIngestion and vector storage complete!")
+    bm25 = build_bm25_index(chunks)
+
+    print("\nIngestion complete. Ready to build retrieval.")
