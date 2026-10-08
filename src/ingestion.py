@@ -3,6 +3,9 @@ from pathlib import Path
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+
 def load_documents(docs_path: str) -> list:
     """Load all .md files from a directory recursively."""
     loader = DirectoryLoader(
@@ -66,19 +69,48 @@ def inspect_chunks(chunks: list, n: int = 3):
         print(f"  Content: {chunk.page_content[:150].strip()}")
         print()
 
+CHROMA_PATH = "./data/chroma_db"
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2" #384 dimensional embeddings
+
+def build_vector_store(chunks: list, persist_path: str = CHROMA_PATH) -> Chroma:
+    """Embed chunks and store in ChromaDB."""
+
+    # Check if already built
+    if os.path.exists(persist_path) and os.listdir(persist_path):
+        print("✓ ChromaDB already exists — loading from disk")
+        embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+        return Chroma(
+            persist_directory=persist_path,
+            embedding_function=embeddings
+        )
+
+    print(f"Building ChromaDB with {len(chunks)} chunks...")
+    print("  (This takes a few minutes the first time)")
+
+    embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+
+    vectorstore = Chroma.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+        persist_directory=persist_path,
+        collection_metadata={"hnsw:space": "cosine"}  # use cosine similarity
+    )
+
+    print(f"✓ ChromaDB built and saved to {persist_path}")
+    print(f"  Collection size: {vectorstore._collection.count()} vectors")
+    return vectorstore
+
 
 
 if __name__ == "__main__":
     docs = load_documents("./docs/fastapi-docs/docs/en")
 
-    for size in [256, 512, 1024]:
-        print(f"\n{'=' * 50}")
-        print(f"CHUNK SIZE = {size}")
+    chunks = chunk_documents(
+                docs,
+                chunk_size=512,
+                chunk_overlap=64
+            )
 
-        chunks = chunk_documents(
-            docs,
-            chunk_size=size,
-            chunk_overlap=size // 8
-        )
+    vectorstore = build_vector_store(chunks)
 
-        inspect_chunks(chunks, n=1)
+    print("\nIngestion and vector storage complete!")
