@@ -1,0 +1,97 @@
+import re
+import pickle
+
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+from rank_bm25 import BM25Okapi
+
+
+CHROMA_PATH = "./data/chroma_db"
+BM25_PATH = "./data/bm25_index.pkl"
+CHUNKS_PATH = "./data/chunks.pkl"
+
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+def load_retrieval_components():
+    embeddings = HuggingFaceEmbeddings(
+        model_name=EMBED_MODEL
+    )
+
+    vectorstore = Chroma(
+        persist_directory=CHROMA_PATH,
+        embedding_function=embeddings
+    )
+
+    with open(BM25_PATH, "rb") as f:
+        bm25 = pickle.load(f)
+
+    with open(CHUNKS_PATH, "rb") as f:
+        chunks = pickle.load(f)
+
+    return vectorstore, bm25, chunks
+
+def dense_retrieve(
+    query: str,
+    vectorstore: Chroma,
+    k: int = 10
+) -> list:
+    """Retrieve the k most semantically similar chunks."""
+
+    results = vectorstore.similarity_search_with_relevance_scores(
+        query,
+        k=k
+    )
+
+    return results
+
+def tokenize(text: str) -> list[str]:
+    """Convert text into lowercase searchable tokens."""
+    return re.findall(r"\b\w+\b", text.lower())
+
+def sparse_retrieve(query: str,bm25: BM25Okapi,chunks: list,k: int = 10) -> list:
+    tokenized_query = tokenize(query)
+
+    scores = bm25.get_scores(tokenized_query)
+
+    top_k_indices = sorted(
+        range(len(scores)),
+        key=lambda i: scores[i],
+        reverse=True
+    )[:k]
+
+    return [
+        (chunks[i], scores[i])
+        for i in top_k_indices
+    ]
+
+
+if __name__ == "__main__":
+    vectorstore, bm25, chunks = load_retrieval_components()
+
+    query = "Path parameters predefined values"
+
+    print("\n=== DENSE RESULTS (ChromaDB) ===")
+
+    dense_results = dense_retrieve(
+        query,
+        vectorstore,
+        k=5
+    )
+
+    for doc, score in dense_results:
+        print(f"\n[{score:.3f}]")
+        print(doc.page_content[:200].strip())
+
+    print("\n=== SPARSE RESULTS (BM25) ===")
+
+    sparse_results = sparse_retrieve(
+        query,
+        bm25,
+        chunks,
+        k=5
+    )
+
+    for doc, score in sparse_results:
+        print(f"\n[{score:.3f}]")
+        print(doc.page_content[:200].strip())
