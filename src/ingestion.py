@@ -15,15 +15,30 @@ def load_documents(docs_path: str) -> list:
     """Load all .md files from a directory recursively."""
     loader = DirectoryLoader(
         docs_path,
-        glob="**/*.md",              
+        glob="**/*.md",
         loader_cls=TextLoader,
         loader_kwargs={"encoding": "utf-8"},
         show_progress=True
     )
+
+    # Step 1: Load everything first
     docs = loader.load()
-    print(f"✓ Loaded {len(docs)} documents")
+    print(f"  Raw documents loaded: {len(docs)}")
     print(f"  Total characters: {sum(len(d.page_content) for d in docs):,}")
-    return docs
+
+    # Step 2: Then filter
+    EXCLUDE_FILES = ["release-notes.md", "changelog.md"]
+
+    filtered = [
+        doc for doc in docs
+        if not any(
+            excl in doc.metadata.get("source", "")
+            for excl in EXCLUDE_FILES
+        )
+    ]
+
+    print(f"✓ Loaded {len(docs)} docs → {len(filtered)} after filtering")
+    return filtered
 
 # corpus=collection of docs that the rag application will search
 def inspect_corpus(docs: list):
@@ -35,7 +50,7 @@ def inspect_corpus(docs: list):
         print(f"  Preview: {doc.page_content[:100].strip()}")
         print()
 
-def chunk_documents(docs: list, chunk_size: int = 512, chunk_overlap: int = 64) -> list:
+def chunk_documents(docs: list, chunk_size: int = 800, chunk_overlap: int = 100) -> list:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -52,16 +67,17 @@ def chunk_documents(docs: list, chunk_size: int = 512, chunk_overlap: int = 64) 
 
     chunks = splitter.split_documents(docs)
 
-    # Add chunk index to metadata
     for i, chunk in enumerate(chunks):
         chunk.metadata["chunk_index"] = i
         chunk.metadata["chunk_size"] = len(chunk.page_content)
+    MIN_CHUNK_SIZE = 50   # characters
+    before = len(chunks)
+    chunks = [c for c in chunks if c.metadata["chunk_size"] >= MIN_CHUNK_SIZE]
 
-    print(f"✓ Created {len(chunks)} chunks from {len(docs)} documents")
-    print(f"  Avg chunk size: {sum(c.metadata['chunk_size'] for c in chunks) // len(chunks)} chars")
-    print(f"  Smallest chunk: {min(c.metadata['chunk_size'] for c in chunks)} chars")
-    print(f"  Largest chunk: {max(c.metadata['chunk_size'] for c in chunks)} chars")
+    for i, chunk in enumerate(chunks):
+        chunk.metadata["chunk_index"] = i
 
+    print(f"✓ Created {before} chunks → {len(chunks)} after removing tiny chunks")
     return chunks
 
 
