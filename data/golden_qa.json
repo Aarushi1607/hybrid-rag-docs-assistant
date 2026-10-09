@@ -1,0 +1,178 @@
+[
+  {
+    "id": 1,
+    "type": "straightforward",
+    "question": "How do I declare a path parameter in FastAPI?",
+    "golden_answer": "Use curly braces in the route path and declare a matching function parameter, such as @app.get('/items/{item_id}') with def read_item(item_id: int).",
+    "source_hint": "path-params"
+  },
+  {
+    "id": 2,
+    "type": "straightforward",
+    "question": "How do I declare an optional query parameter?",
+    "golden_answer": "Declare a function parameter with a default value of None and an optional type, such as q: str | None = None.",
+    "source_hint": "query-params"
+  },
+  {
+    "id": 3,
+    "type": "straightforward",
+    "question": "How do I define a request body in FastAPI?",
+    "golden_answer": "Define a Pydantic model and declare it as a parameter in the path operation function. FastAPI reads the request body, validates it, and provides the model instance.",
+    "source_hint": "body"
+  },
+  {
+    "id": 4,
+    "type": "straightforward",
+    "question": "How does FastAPI validate a path parameter declared as an integer?",
+    "golden_answer": "Declare the parameter with a Python type annotation such as item_id: int. FastAPI parses and validates the value and returns a validation error if it is not a valid integer.",
+    "source_hint": "path-params"
+  },
+  {
+    "id": 5,
+    "type": "straightforward",
+    "question": "How do I set a response model in FastAPI?",
+    "golden_answer": "Pass a Pydantic model to the response_model parameter of the path operation decorator, for example @app.get('/items/{item_id}', response_model=Item).",
+    "source_hint": "response-model"
+  },
+  {
+    "id": 6,
+    "type": "straightforward",
+    "question": "How do I return an HTTP 201 status code?",
+    "golden_answer": "Set status_code=201 in the path operation decorator, for example @app.post('/items/', status_code=201).",
+    "source_hint": "response-status-code"
+  },
+  {
+    "id": 7,
+    "type": "straightforward",
+    "question": "How do I raise an HTTP error in FastAPI?",
+    "golden_answer": "Import HTTPException from fastapi and raise it with an appropriate status code and detail, such as raise HTTPException(status_code=404, detail='Item not found').",
+    "source_hint": "handling-errors"
+  },
+  {
+    "id": 8,
+    "type": "straightforward",
+    "question": "How do I create a dependency in FastAPI?",
+    "golden_answer": "Define a dependency function and declare it in a path operation using Depends, for example def read_items(commons: dict = Depends(common_parameters)).",
+    "source_hint": "dependencies"
+  },
+  {
+    "id": 9,
+    "type": "multi_hop",
+    "question": "How does FastAPI combine path parameters with request body validation?",
+    "golden_answer": "Declare path parameters in the route path and function signature, and declare the request body using a Pydantic model parameter. FastAPI extracts and validates both according to their declarations.",
+    "source_hint": "path-params + body"
+  },
+  {
+    "id": 10,
+    "type": "multi_hop",
+    "question": "How can I accept a path parameter, query parameter, and request body in one endpoint?",
+    "golden_answer": "Declare the path parameter in the route and function signature, the query parameter as a scalar function parameter, and the body as a Pydantic model parameter. FastAPI identifies and validates each based on the route and parameter declarations.",
+    "source_hint": "path-params + query-params + body"
+  },
+  {
+    "id": 11,
+    "type": "multi_hop",
+    "question": "How do Pydantic models and response_model work together in an endpoint?",
+    "golden_answer": "A Pydantic model can define and validate the request body, while response_model specifies the expected response structure. FastAPI validates and serializes the response according to the declared response model.",
+    "source_hint": "body + response-model"
+  },
+  {
+    "id": 12,
+    "type": "multi_hop",
+    "question": "How can dependencies be reused across multiple endpoints, and how do sub-dependencies help?",
+    "golden_answer": "Define reusable dependency functions and declare them using Depends in multiple path operations. A dependency can itself depend on other dependencies, allowing FastAPI to resolve the dependency chain.",
+    "source_hint": "dependencies + sub-dependencies"
+  },
+  {
+    "id": 13,
+    "type": "multi_hop",
+    "question": "How can FastAPI return a custom error while using request validation?",
+    "golden_answer": "FastAPI validates declared parameters and request bodies automatically. For application-specific errors, raise HTTPException with an appropriate status code and detail. Validation failures are handled separately by FastAPI's validation error mechanism.",
+    "source_hint": "body + handling-errors"
+  },
+  {
+    "id": 14,
+    "type": "multi_hop",
+    "question": "How do I upload a file alongside form fields in FastAPI?",
+    "golden_answer": "Declare uploaded files with File and form fields with Form. FastAPI supports receiving files and form data together using multipart/form-data, rather than treating the same request as a JSON body.",
+    "source_hint": "request-files + request-forms-and-files"
+  },
+  {
+    "id": 15,
+    "type": "multi_hop",
+    "question": "How do OAuth2 dependencies and current-user retrieval work together in FastAPI?",
+    "golden_answer": "An OAuth2 security dependency extracts the bearer token from the request. A current-user dependency can then validate the token, obtain the user's identity, and provide the current user to protected path operations.",
+    "source_hint": "oauth2-jwt + get-current-user"
+  },
+  {
+    "id": 16,
+    "type": "reasoning",
+    "question": "An endpoint receives an item ID in the URL and item details as JSON. How should I declare both?",
+    "golden_answer": "Declare the ID as a path parameter in the route and function signature, and declare the JSON body using a Pydantic model parameter. FastAPI extracts and validates both inputs.",
+    "source_hint": "path-params + body"
+  },
+  {
+    "id": 17,
+    "type": "reasoning",
+    "question": "I want an endpoint to return only selected public fields from an item. Which FastAPI feature should I use?",
+    "golden_answer": "Use a response model that defines the fields intended for output. FastAPI uses it to validate and serialize the response, helping control the response structure.",
+    "source_hint": "response-model"
+  },
+  {
+    "id": 18,
+    "type": "reasoning",
+    "question": "A client sends a negative number, but my endpoint only accepts positive item IDs. How can I enforce this?",
+    "golden_answer": "Use FastAPI's path parameter validation with an appropriate numeric constraint, such as Path(gt=0), to require the value to be greater than zero.",
+    "source_hint": "path-params-numeric-validations"
+  },
+  {
+    "id": 19,
+    "type": "reasoning",
+    "question": "Several endpoints need the same authentication or shared validation logic. How can I avoid repeating that logic?",
+    "golden_answer": "Create reusable dependency functions and inject them using Depends. Shared dependencies can be used across path operations, and dependencies can also be composed from sub-dependencies.",
+    "source_hint": "dependencies + global-dependencies"
+  },
+  {
+    "id": 20,
+    "type": "reasoning",
+    "question": "I want to run a function after returning a response without making the client wait for that task to finish. Which FastAPI feature can help?",
+    "golden_answer": "Use BackgroundTasks by declaring it as a parameter in the path operation and adding the task to it. FastAPI runs the registered tasks after sending the response.",
+    "source_hint": "background-tasks"
+  },
+  {
+    "id": 21,
+    "type": "no_answer",
+    "question": "How do I configure Redis as a session store in FastAPI?",
+    "golden_answer": "NOT_IN_CORPUS",
+    "source_hint": "not in docs"
+  },
+  {
+    "id": 22,
+    "type": "no_answer",
+    "question": "How do I integrate Stripe payments and automatically process successful payment webhooks in FastAPI?",
+    "golden_answer": "NOT_IN_CORPUS",
+    "source_hint": "not in docs"
+  },
+  {
+    "id": 23,
+    "type": "no_answer",
+    "question": "How do I configure Apache Kafka consumers and producers in FastAPI?",
+    "golden_answer": "NOT_IN_CORPUS",
+    "source_hint": "not in docs"
+  },
+  {
+    "id": 24,
+    "type": "no_answer",
+    "question": "How do I implement a MongoDB replica set and multi-document transactions in FastAPI?",
+    "golden_answer": "NOT_IN_CORPUS",
+    "source_hint": "not in docs"
+  },
+  {
+    "id": 25,
+    "type": "no_answer",
+    "question": "How do I configure a Kubernetes Horizontal Pod Autoscaler specifically for FastAPI?",
+    "golden_answer": "NOT_IN_CORPUS",
+    "source_hint": "not in docs"
+  }
+]
+
