@@ -116,11 +116,10 @@ def generate_answer(question: str, context_chunks: list) -> dict:
     prompt = build_rag_prompt(question, context_chunks)
 
     response = ollama.chat(
-        model=OLLAMA_MODEL,
-        messages=[
-            {"role": "user", "content": prompt}
-        ]
-    )
+    model=OLLAMA_MODEL,
+    messages=[{"role": "user", "content": prompt}],
+    options={"think": False}  
+)
 
     answer = response["message"]["content"]
 
@@ -145,7 +144,7 @@ def ask(question: str, vectorstore, bm25, chunks) -> dict:
     context = hybrid_retrieve(question, vectorstore, bm25, chunks, top_n=5)
     from src.retrieval import dense_retrieve
     dense_results = dense_retrieve(question, vectorstore, k=3)
-    confidence = compute_confidence(dense_results)  # ← uses real 0-1 scores
+    confidence = compute_confidence(dense_results)  
 
     print(f"  Retrieved {len(context)} chunks")
     print(f"  Confidence: {confidence['label']} (top score: {confidence['top_score']})")
