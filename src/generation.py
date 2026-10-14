@@ -1,8 +1,9 @@
 import os
+import time
 import ollama
 from src.retrieval import load_retrieval_components, hybrid_retrieve
 
-OLLAMA_MODEL = "qwen3:4b"
+OLLAMA_MODEL = "gemma3:4b"
 
 def build_rag_prompt(question: str, context_chunks: list) -> str:
     """Build a grounded generation prompt."""
@@ -100,13 +101,12 @@ LABEL:"""
 
     decision = response["message"]["content"].strip().upper()
 
-    if "INSUFFICIENT" in decision:
-        return False
-
-    if "ANSWERABLE" in decision:
+    if decision == "ANSWERABLE":
         return True
 
-    
+    if decision == "INSUFFICIENT":
+        return False
+
     return False
 
 
@@ -159,7 +159,15 @@ def ask(question: str, vectorstore, bm25, chunks) -> dict:
                 "Try rephrasing your question or checking the documentation directly."
             ),
             "confidence": confidence,
-            "sources": []
+            "sources": [
+                {
+                    "index": i,
+                    "source": chunk.metadata.get("source", "unknown").replace("\\", "/").split("/")[-1],
+                    "preview": chunk.page_content[:150].strip(),
+                    "relevance_score": round(float(score), 4),
+                }
+                for i, (chunk, score) in enumerate(context, 1)
+            ]
         }
 
     print("Checking whether retrieved context can answer the question...")
@@ -173,7 +181,15 @@ def ask(question: str, vectorstore, bm25, chunks) -> dict:
                 "checking the documentation directly."
             ),
             "confidence": confidence,
-            "sources": []
+            "sources": [
+                {
+                    "index": i,
+                    "source": chunk.metadata.get("source", "unknown").replace("\\", "/").split("/")[-1],
+                    "preview": chunk.page_content[:150].strip(),
+                    "relevance_score": round(float(score), 4),
+                }
+                for i, (chunk, score) in enumerate(context, 1)
+            ]
         }
 
     print("Generating answer with Ollama...")

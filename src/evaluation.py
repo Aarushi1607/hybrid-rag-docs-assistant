@@ -26,7 +26,7 @@ If the generated answer says "I don't have enough information" but the golden an
 Respond with only: {{"score": X, "reason": "one sentence"}}"""
 
     response = ollama.chat(
-        model="qwen3:4b",
+        model="gemma3:4b",
         messages=[{"role": "user", "content": judge_prompt}],
         format="json",
         options={"think": False}
