@@ -1,11 +1,14 @@
-
+import logging
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from src.generation import ask
+from src.generation import ask, warm_up, OLLAMA_MODEL
 from src.retrieval import load_retrieval_components
+
+logger = logging.getLogger("uvicorn.error")
 
 
 # Load retrieval components once when the API starts.
@@ -16,6 +19,13 @@ async def lifespan(app: FastAPI):
     app.state.vectorstore = vectorstore
     app.state.bm25 = bm25
     app.state.chunks = chunks
+
+    # Load the LLM into memory now so the first question isn't slow.
+    # The API still starts if Ollama is down; /v1/ask will report the error.
+    try:
+        warm_up()
+    except Exception:
+        logger.warning("Ollama warm-up failed (is Ollama running?)", exc_info=True)
 
     yield
 
@@ -35,6 +45,10 @@ class Question(BaseModel):
         max_length=2000,
         description="Question about the FastAPI documentation",
     )
+    retrieval_mode: Literal["hybrid", "dense"] = Field(
+        "hybrid",
+        description="hybrid = Dense + BM25 + RRF (default); dense = vector search only",
+    )
 
 
 @app.post("/v1/ask")
@@ -53,6 +67,7 @@ def ask_question(body: Question):
             app.state.vectorstore,
             app.state.bm25,
             app.state.chunks,
+            mode=body.retrieval_mode,
         )
         return result
 
@@ -60,7 +75,8 @@ def ask_question(body: Question):
         raise
 
     except Exception as exc:
-        # Keep implementation details out of the API response.
+        # Log the cause server-side; keep implementation details out of the response.
+        logger.exception("Failed to answer question (mode=%s)", body.retrieval_mode)
         raise HTTPException(
             status_code=500,
             detail="An error occurred while processing your question.",
@@ -72,4 +88,5 @@ def health():
     return {
         "status": "ok",
         "chunks_loaded": len(app.state.chunks),
+        "model": OLLAMA_MODEL,
     }

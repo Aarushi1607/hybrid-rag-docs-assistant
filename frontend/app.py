@@ -13,10 +13,11 @@ ASK_TIMEOUT_S = float(os.getenv("ASK_TIMEOUT_S", "180"))  # local LLMs are slow
 HEALTH_TIMEOUT_S = 3.0
 
 EXAMPLES = [
-    "Create a GET endpoint",
-    "Validate a request body",
-    "Return a custom response",
+    "How do I define a path operation using @app.get()?",
+    "How do I create a POST endpoint using @app.post()?",
+    "What is a path operation function in FastAPI?"
 ]
+
 PLACEHOLDER = "Ask anything about FastAPI, e.g. How do I create a POST endpoint?"
 
 MODES = {
