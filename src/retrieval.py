@@ -142,6 +142,41 @@ def hybrid_retrieve(
         top_n=top_n
     )
 
+
+def source_name(chunk) -> str:
+    """Return a display-friendly source filename on Windows and Unix paths."""
+    source = str(chunk.metadata.get("source", "unknown"))
+    return source.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def retrieve_context(
+    query: str,
+    vectorstore: Chroma,
+    bm25: BM25Okapi,
+    chunks: list,
+    mode: str = "hybrid",
+    top_n: int = 5,
+) -> tuple[list, list]:
+    """Retrieve context for the selected mode and retain dense results for confidence."""
+    dense_results = dense_retrieve(query, vectorstore, k=10)
+
+    if mode == "dense":
+        return dense_results[:top_n], dense_results
+
+    if mode == "hybrid":
+        sparse_results = sparse_retrieve(query, bm25, chunks, k=10)
+        context = reciprocal_rank_fusion(
+            dense_results,
+            sparse_results,
+            dense_weight=0.7,
+            sparse_weight=0.3,
+            rrf_k=60,
+            top_n=top_n,
+        )
+        return context, dense_results
+
+    raise ValueError(f"Unsupported retrieval mode: {mode!r}")
+
 def compare_retrieval(
     query: str,
     vectorstore: Chroma,

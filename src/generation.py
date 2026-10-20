@@ -1,9 +1,37 @@
-import os
+import re
 import time
 import ollama
-from src.retrieval import load_retrieval_components, hybrid_retrieve
+from src.retrieval import load_retrieval_components, retrieve_context, source_name
 
 OLLAMA_MODEL = "gemma3:4b"
+
+KEEP_ALIVE = "30m"          
+CONTEXT_TOP_N = 5           
+USE_ANSWERABILITY_CHECK = False  
+                                 # contains the "not enough information" rule)
+GATE_OPTIONS = {"temperature": 0, "num_predict": 6}      # label only
+GEN_OPTIONS = {"temperature": 0.1, "num_predict": 600}   # caps runaway answers
+
+FALLBACK_TEXT = "I don't have enough information in the provided context to answer this question."
+
+
+def warm_up() -> None:
+    """Load the model into memory so the first real request isn't slow."""
+    ollama.generate(model=OLLAMA_MODEL, prompt="", keep_alive=KEEP_ALIVE)
+
+
+def format_sources(context_chunks: list) -> list[dict]:
+    """One place that builds the API 'sources' list (handles Windows paths)."""
+    return [
+        {
+            "index": i,
+            "source": source_name(chunk),
+            "preview": chunk.page_content[:150].strip(),
+            "relevance_score": round(float(score), 4),
+        }
+        for i, (chunk, score) in enumerate(context_chunks, 1)
+    ]
+
 
 def build_rag_prompt(question: str, context_chunks: list) -> str:
     """Build a grounded generation prompt."""
@@ -11,7 +39,7 @@ def build_rag_prompt(question: str, context_chunks: list) -> str:
     context_blocks = []
 
     for i, (chunk, score) in enumerate(context_chunks, 1):
-        source = os.path.basename(chunk.metadata.get("source", "unknown"))
+        source = source_name(chunk)
 
         context_blocks.append(
             f"[{i}] (from {source}, relevance: {score:.3f})\n"
@@ -24,8 +52,9 @@ def build_rag_prompt(question: str, context_chunks: list) -> str:
 Answer the question using ONLY the context provided below.
 When you use information from a context block, cite it with its number like [1] or [2].
 If the context does not contain enough information to answer, say:
-"I don't have enough information in the provided context to answer this question."
+"{FALLBACK_TEXT}"
 Do not make up information. Do not use knowledge from outside the context.
+Be concise: give the direct answer and a short example if the context has one.
 
 Context:
 {context_text}
@@ -35,6 +64,7 @@ Question: {question}
 Answer:"""
 
     return prompt
+
 
 def compute_confidence(context_chunks: list) -> dict:
     """
@@ -60,6 +90,12 @@ def compute_confidence(context_chunks: list) -> dict:
         "avg_score": avg_score,
         "label": label
     }
+
+
+def _parse_label(text: str) -> str | None:
+    """Tolerate 'ANSWERABLE.', '**ANSWERABLE**', trailing newlines, etc."""
+    m = re.search(r"\b(ANSWERABLE|INSUFFICIENT)\b", text.upper())
+    return m.group(1) if m else None
 
 
 def check_answerability(question: str, context_chunks: list) -> bool:
@@ -96,18 +132,12 @@ LABEL:"""
 
     response = ollama.chat(
         model=OLLAMA_MODEL,
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
+        options=GATE_OPTIONS,
+        keep_alive=KEEP_ALIVE,
     )
 
-    decision = response["message"]["content"].strip().upper()
-
-    if decision == "ANSWERABLE":
-        return True
-
-    if decision == "INSUFFICIENT":
-        return False
-
-    return False
+    return _parse_label(response["message"]["content"]) == "ANSWERABLE"  # fail closed
 
 
 def generate_answer(question: str, context_chunks: list) -> dict:
@@ -115,111 +145,89 @@ def generate_answer(question: str, context_chunks: list) -> dict:
 
     prompt = build_rag_prompt(question, context_chunks)
 
+    # gemma3 has no thinking mode, so no `think` argument is needed.
     response = ollama.chat(
-    model=OLLAMA_MODEL,
-    messages=[{"role": "user", "content": prompt}],
-    options={"think": False}  
-)
-
-    answer = response["message"]["content"]
+        model=OLLAMA_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        options=GEN_OPTIONS,
+        keep_alive=KEEP_ALIVE,
+    )
 
     return {
         "question": question,
-        "answer": answer,
-        "sources": [
-            {
-                "index": i + 1,
-                "source": chunk.metadata.get("source", "?").split("/")[-1],
-                "preview": chunk.page_content[:150].strip(),
-                "relevance_score": round(score, 4)
-            }
-            for i, (chunk, score) in enumerate(context_chunks)
-        ]
+        "answer": response["message"]["content"],
+        "sources": format_sources(context_chunks),
     }
 
-def ask(question: str, vectorstore, bm25, chunks) -> dict:
-    print(f"\nRetrieving context for: '{question}'")
 
-   
-    context = hybrid_retrieve(question, vectorstore, bm25, chunks, top_n=5)
-    from src.retrieval import dense_retrieve
-    dense_results = dense_retrieve(question, vectorstore, k=3)
-    confidence = compute_confidence(dense_results)  
+def _fallback(question, confidence, context, mode, note=""):
+    return {
+        "question": question,
+        "answer": f"{FALLBACK_TEXT}{note} Try rephrasing your question or checking the documentation directly.",
+        "confidence": confidence,
+        "sources": format_sources(context),
+        "retrieval_mode": mode,
+    }
 
-    print(f"  Retrieved {len(context)} chunks")
+
+def ask(question: str, vectorstore, bm25, chunks, mode: str = "hybrid") -> dict:
+    t0 = time.perf_counter()
+    print(f"\nRetrieving context for: '{question}' (mode={mode})")
+
+    # One dense query serves both the context (via the chosen mode) and the gate.
+    context, dense_results = retrieve_context(
+        question, vectorstore, bm25, chunks, mode=mode, top_n=CONTEXT_TOP_N
+    )
+    confidence = compute_confidence(dense_results[:3])
+    t_retrieve = time.perf_counter()
+
+    print(f"  Retrieved {len(context)} chunks in {t_retrieve - t0:.2f}s")
     print(f"  Confidence: {confidence['label']} (top score: {confidence['top_score']})")
 
     if confidence["label"] == "low":
-        return {
-            "question": question,
-            "answer": (
-                "I don't have enough information in the provided context "
-                f"to answer this question. "
-                f"(Best retrieval score was only {confidence['top_score']:.2f}.) "
-                "Try rephrasing your question or checking the documentation directly."
-            ),
-            "confidence": confidence,
-            "sources": [
-                {
-                    "index": i,
-                    "source": chunk.metadata.get("source", "unknown").replace("\\", "/").split("/")[-1],
-                    "preview": chunk.page_content[:150].strip(),
-                    "relevance_score": round(float(score), 4),
-                }
-                for i, (chunk, score) in enumerate(context, 1)
-            ]
-        }
+        note = f" (Best retrieval score was only {confidence['top_score']:.2f}.)"
+        return _fallback(question, confidence, context, mode, note)
 
-    print("Checking whether retrieved context can answer the question...")
+    if USE_ANSWERABILITY_CHECK:
+        print("Checking whether retrieved context can answer the question...")
+        answerable = check_answerability(question, context)
+        print(f"  Answerability check: {time.perf_counter() - t_retrieve:.2f}s")
+        if not answerable:
+            return _fallback(question, confidence, context, mode)
 
-    if not check_answerability(question, context):
-        return {
-            "question": question,
-            "answer": (
-                "I don't have enough information in the provided context "
-                "to answer this question. Try rephrasing your question or "
-                "checking the documentation directly."
-            ),
-            "confidence": confidence,
-            "sources": [
-                {
-                    "index": i,
-                    "source": chunk.metadata.get("source", "unknown").replace("\\", "/").split("/")[-1],
-                    "preview": chunk.page_content[:150].strip(),
-                    "relevance_score": round(float(score), 4),
-                }
-                for i, (chunk, score) in enumerate(context, 1)
-            ]
-        }
-
+    t_gen = time.perf_counter()
     print("Generating answer with Ollama...")
     result = generate_answer(question, context)
+    print(f"  Generation: {time.perf_counter() - t_gen:.2f}s  (total {time.perf_counter() - t0:.2f}s)")
     result["confidence"] = confidence
+    result["retrieval_mode"] = mode
     return result
+
 
 if __name__ == "__main__":
     vectorstore, bm25, chunks = load_retrieval_components()
+    warm_up()
 
     test_questions = [
-    "How do I create a POST route using @app.post decorator in FastAPI?",
-    "What is dependency injection in FastAPI?",
-    "How does FastAPI handle request validation?",
-    "How do I configure Redis as a cache backend?",
-    "Explain how to integrate a PostgreSQL database with FastAPI."
+        "How do I create a POST route using @app.post decorator in FastAPI?",
+        "What is dependency injection in FastAPI?",
+        "How does FastAPI handle request validation?",
+        "How do I configure Redis as a cache backend?",
+        "Explain how to integrate a PostgreSQL database with FastAPI.",
     ]
 
     for q in test_questions:
-            result = ask(q, vectorstore, bm25, chunks)
+        result = ask(q, vectorstore, bm25, chunks)
 
-            print(f"\n{'='*60}")
-            print(f"Q: {result['question']}")
-            print(f"Confidence: {result['confidence']['label']} "
-                f"(top={result['confidence']['top_score']})")
-            print(f"\nA: {result['answer']}")
+        print(f"\n{'='*60}")
+        print(f"Q: {result['question']}")
+        print(f"Confidence: {result['confidence']['label']} "
+              f"(top={result['confidence']['top_score']})")
+        print(f"\nA: {result['answer']}")
 
-            if result["sources"]:
-                print(f"\nSources:")
-                for src in result["sources"]:
-                    print(f"  [{src['index']}] {src['source']} "
-                        f"(score: {src['relevance_score']})")
-                    print(f"       {src['preview'][:80]}...")
+        if result["sources"]:
+            print("\nSources:")
+            for src in result["sources"]:
+                print(f"  [{src['index']}] {src['source']} "
+                      f"(score: {src['relevance_score']})")
+                print(f"       {src['preview'][:80]}...")
